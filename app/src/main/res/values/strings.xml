@@ -1,0 +1,3 @@
+<resources>
+    <string name="accessibility_description">用于识别当前前台应用，在您设定的专注时段将非白名单应用返回桌面。不采集页面文字，不上传任何数据。可在系统设置中撤回此权限；撤回后无法拦截。</string>
+</resources>
