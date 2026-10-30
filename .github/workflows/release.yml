@@ -41,3 +41,20 @@ jobs:
       - name: Remove temporary signing material
         if: always()
         run: rm -f "$RUNNER_TEMP/focus.jks"
+      - name: Publish static update metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '{tag_name, body, draft, prerelease, assets: [.assets[] | {name, browser_download_url, size, digest}]}' > "$RUNNER_TEMP/latest.json"
+          git fetch origin main
+          git checkout main
+          mkdir -p updates
+          cp "$RUNNER_TEMP/latest.json" updates/latest.json
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add updates/latest.json
+          git diff --cached --quiet || git commit -m "Publish update metadata for $GITHUB_REF_NAME"
+          git push origin main
+      - name: Final signing cleanup
+        if: always()
+        run: rm -f "$RUNNER_TEMP/focus.jks"

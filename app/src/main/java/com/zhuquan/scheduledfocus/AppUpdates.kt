@@ -30,17 +30,25 @@ class AppUpdates(private val context: Context) {
     fun due() = automatic && System.currentTimeMillis() - prefs.getLong("checked", 0) > 6 * 60 * 60 * 1000
     fun cached(): AppRelease? = prefs.getString("release", null)?.let { runCatching { decode(JSONObject(it)) }.getOrNull() }
     fun check(): AppRelease? {
-        val connection = URL("https://api.github.com/repos/$REPOSITORY/releases/latest").openConnection() as HttpURLConnection
+        // A public API quota is shared by everyone using the same internet gateway.
+        // The workflow also publishes metadata without the REST API quota.
+        val json = runCatching { fetch("https://raw.githubusercontent.com/$REPOSITORY/main/updates/latest.json") }.getOrNull()
+            ?: fetch("https://api.github.com/repos/$REPOSITORY/releases/latest")
+        val release = json?.let { decode(it) }
+        prefs.edit().putLong("checked", System.currentTimeMillis()).apply {
+            if (json == null) remove("release") else putString("release", json.toString())
+        }.apply()
+        return release
+    }
+    private fun fetch(url: String): JSONObject? {
+        val connection = URL(url).openConnection() as HttpURLConnection
         connection.connectTimeout = 15000; connection.readTimeout = 15000
         connection.setRequestProperty("Accept", "application/vnd.github+json")
         connection.setRequestProperty("User-Agent", "ScheduledFocus/${BuildConfig.VERSION_NAME}")
         try {
-            if (connection.responseCode == 404) { prefs.edit().putLong("checked", System.currentTimeMillis()).apply(); return null }
+            if (connection.responseCode == 404) return null
             check(connection.responseCode == 200) { "更新服务暂不可用（${connection.responseCode}），请稍后重试" }
-            val json = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
-            val release = decode(json)
-            prefs.edit().putLong("checked", System.currentTimeMillis()).putString("release", json.toString()).apply()
-            return release
+            return JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
         } finally { connection.disconnect() }
     }
     private fun decode(json: JSONObject): AppRelease? {
