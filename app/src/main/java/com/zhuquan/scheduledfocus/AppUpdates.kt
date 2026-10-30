@@ -73,7 +73,8 @@ class AppUpdates(private val context: Context) {
         prefs.edit().putLong("download", id).putString("download_tag", release.tag)
             .putString("digest", release.digest).putLong("size", release.size).apply()
     }
-    fun downloadState(): DownloadState? {
+    fun downloadState(expectedTag: String? = null): DownloadState? {
+        if (expectedTag != null && expectedTag != prefs.getString("download_tag", null)) return null
         val id = prefs.getLong("download", -1)
         if (id == -1L) return null
         manager.query(DownloadManager.Query().setFilterById(id))?.use { cursor ->
@@ -102,6 +103,7 @@ class AppUpdates(private val context: Context) {
             check(hasher.digest().joinToString("") { "%02x".format(it) } == digest.removePrefix("sha256:")) { "文件校验失败，请重新下载" }
         }
         val archive = context.packageManager.getPackageArchiveInfo(file.path, PackageManager.GET_SIGNATURES) ?: error("无法读取安装包")
+        check(archive.versionName == prefs.getString("download_tag", "")?.removePrefix("v")) { "安装包版本与下载记录不符，请重新下载" }
         val installed = context.packageManager.getPackageInfo(context.packageName, PackageManager.GET_SIGNATURES)
         check(archive.packageName == context.packageName && archive.signatures?.toSet() == installed.signatures?.toSet()) { "安装包身份或签名不匹配，已拒绝安装" }
         val archiveVersion = if (Build.VERSION.SDK_INT >= 28) archive.longVersionCode else archive.versionCode.toLong()

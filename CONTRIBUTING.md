@@ -6,4 +6,4 @@
 
 时间规则和锁定必须由存储层执行。不要添加临时放行或提前结束入口；系统必要交互不能被误拦。新增更新渠道时必须保留包名、签名与版本校验。
 
-发布时增加 versionCode 和 versionName，更新 `docs/RELEASE_NOTES.md`，推送与 versionName 一致的 `vX.Y.Z` 标签。签名工作流先发布预发布候选包，检查安装和系统扫描结果后才转为正式发布；预发布不会推送给普通用户。转为正式发布时同步工作流自动维护 `updates/latest.json`，也可手动运行 Sync stable update metadata。签名工作流使用仓库加密 Secrets；私钥永远不能加入 Git。模拟器通过后仍需记录真机未验证项目，不能宣称已经通过。
+发布时增加 versionCode 和 versionName，更新 `docs/RELEASE_NOTES.md`，推送与 versionName 一致的 `vX.Y.Z` 标签。签名工作流先发布预发布候选包，检查实际安装和系统扫描结果，记录已知限制后再转为个人自用正式发布；预发布不会推送给普通用户。转为正式发布时同步工作流自动维护 `updates/latest.json`，也可手动运行 Sync stable update metadata。签名工作流使用仓库加密 Secrets；私钥永远不能加入 Git。模拟器通过后仍需记录真机未验证项目，不能宣称已经通过。扫描告警的状态不得隐瞒或改写为通过。

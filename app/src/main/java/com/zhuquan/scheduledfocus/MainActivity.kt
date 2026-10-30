@@ -16,6 +16,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -28,6 +29,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -166,7 +168,13 @@ class MainActivity : ComponentActivity() {
         }
         if (pending != null) AlertDialog(onDismissRequest = { pending = null },
             title = { Text("保存后将立即进入限制") },
-            text = { Text("新时间表覆盖当前时间。确认后，非白名单应用将被拦截，直到该连续时段结束；期间无法在应用内修改或关闭限制。") },
+            text = {
+                val proposal = pending?.invoke(settings)
+                val nextState = proposal?.let { ScheduleEngine.evaluate(it, Instant.now(), ZoneId.systemDefault()) }
+                Text(if (nextState?.restricted == true && nextState.currentEnd == null)
+                    "新时间表连续覆盖整周，没有空闲间隔。确认后，应用内将一直无法修改或关闭限制。请确认这确实是你的安排。"
+                else "新时间表覆盖当前时间。确认后，非白名单应用将被拦截，直到该连续时段结束；期间无法在应用内修改或关闭限制。")
+            },
             confirmButton = { TextButton(onClick = { val action = pending; pending = null; action?.let { change(true, it) } }) { Text("确认并开始限制") } },
             dismissButton = { TextButton(onClick = { pending = null }) { Text("返回检查") } })
         message?.let { text -> AlertDialog(onDismissRequest = { message = null }, title = { Text("提示") }, text = { Text(text) }, confirmButton = { TextButton(onClick = { message = null }) { Text("知道了") } }) }
@@ -270,12 +278,13 @@ class MainActivity : ComponentActivity() {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     DayOfWeek.entries.forEach { day ->
                         val selected = day in days
-                        Surface(color = if (selected) Ink else Paper, contentColor = if (selected) Color.White else Ink, shape = CircleShape, modifier = Modifier.weight(1f).clickable(enabled = !locked) { days = if (selected) days - day else days + day }) {
+                        Surface(color = if (selected) Ink else Paper, contentColor = if (selected) Color.White else Ink, shape = CircleShape, modifier = Modifier.weight(1f).toggleable(value = selected, enabled = !locked, role = Role.Checkbox, onValueChange = { days = if (it) days + day else days - day })) {
                             Box(Modifier.height(48.dp), contentAlignment = Alignment.Center) { Text(DayNames[day.value - 1], fontSize = 12.sp) }
                         }
                     }
                 }
                 if (days.isEmpty() || start == end) Text(if (days.isEmpty()) "至少选择一天" else "开始和结束时间不能相同", color = MaterialTheme.colorScheme.error)
+                if (title.isBlank()) Text("请填写时段名称", color = MaterialTheme.colorScheme.error)
             }
         }, confirmButton = { TextButton(enabled = !locked && days.isNotEmpty() && start != end && title.isNotBlank(), onClick = { onSave(rule.copy(title = title.trim(), startMinute = start, endMinute = end, days = days)) }) { Text("保存") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } })
     }

@@ -20,8 +20,8 @@ fun UpdateCard(updates: AppUpdates, locked: Boolean) {
     var automatic by remember { mutableStateOf(updates.automatic) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("从 GitHub Release 获取新版本") }
-    var download by remember { mutableStateOf(updates.downloadState()) }
-    LaunchedEffect(Unit) { while (true) { download = updates.downloadState(); delay(1000) } }
+    var download by remember { mutableStateOf(updates.downloadState(release?.tag)) }
+    LaunchedEffect(Unit) { while (true) { download = updates.downloadState(release?.tag); delay(1000) } }
     fun action(block: suspend () -> Unit) {
         scope.launch { busy = true; try { block() } catch (e: Exception) { message = e.message ?: "操作失败，请重试" } finally { busy = false } }
     }

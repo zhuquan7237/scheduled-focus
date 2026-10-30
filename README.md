@@ -4,7 +4,7 @@
 
 [版本与下载](https://github.com/zhuquan7237/scheduled-focus/releases) · [使用与隐私](PRIVACY.md) · [反馈问题](https://github.com/zhuquan7237/scheduled-focus/issues) · [参与开发](CONTRIBUTING.md)
 
-> 安装验证进行中：v0.2.0 在 Google Play Protect 扫描中被拦截，已撤回正式发布并停止自动更新分发。新候选包通过系统安装验证前，只保留预发布状态。自动测试通过不能代替系统安装检查。
+> 个人自用版本：v0.2.0 和 v0.2.1 曾被 Google Play Protect 联网扫描标记，原因尚未确认，不能称为误报或代表通过安全审核。用户选择个人自用后，已在模拟器中通过系统提供的手动确认完成覆盖安装，没有关闭系统保护。详见 [安装检查记录](docs/INSTALL_REVIEW.md)。
 
 | 今日 | 时间表 | 白名单 | 运行保障与更新 |
 | --- | --- | --- | --- |
