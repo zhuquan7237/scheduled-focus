@@ -13,7 +13,7 @@ object EssentialApps {
             .map { it.activityInfo.packageName }
         val keyboards = context.getSystemService(InputMethodManager::class.java).enabledInputMethodList.map { it.packageName }
         val dialer = context.getSystemService(TelecomManager::class.java).defaultDialerPackage
-        return setOfNotNull(context.packageName, dialer, "android", "com.android.systemui",
+        return setOfNotNull(context.packageName, dialer, "android", "com.android.systemui", "com.android.settings",
             "com.android.server.telecom", "com.android.emergency", "com.google.android.apps.safetyhub",
             "com.android.permissioncontroller", "com.google.android.permissioncontroller",
             "com.android.packageinstaller", "com.google.android.packageinstaller",

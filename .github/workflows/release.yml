@@ -37,22 +37,24 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/*.apk dist/SHA256SUMS.txt --title "定时专注 $GITHUB_REF_NAME" --notes-file docs/RELEASE_NOTES.md --verify-tag
-      - name: Remove temporary signing material
-        if: always()
-        run: rm -f "$RUNNER_TEMP/focus.jks"
+        run: gh release create "$GITHUB_REF_NAME" dist/*.apk dist/SHA256SUMS.txt --title "定时专注 $GITHUB_REF_NAME" --notes-file docs/RELEASE_NOTES.md --verify-tag --prerelease
       - name: Publish static update metadata
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '{tag_name, body, draft, prerelease, assets: [.assets[] | {name, browser_download_url, size, digest}]}' > "$RUNNER_TEMP/latest.json"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" --jq '{tag_name, body, draft, prerelease, assets: [.assets[] | {name, browser_download_url, size, digest}]}' > "$RUNNER_TEMP/latest.json"
           git fetch origin main
           git checkout main
-          mkdir -p updates
-          cp "$RUNNER_TEMP/latest.json" updates/latest.json
+          mkdir -p updates/candidates
+          cp "$RUNNER_TEMP/latest.json" "updates/candidates/$GITHUB_REF_NAME.json"
+          if gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '{tag_name, body, draft, prerelease, assets: [.assets[] | {name, browser_download_url, size, digest}]}' > "$RUNNER_TEMP/stable.json"; then
+            cp "$RUNNER_TEMP/stable.json" updates/latest.json
+          else
+            cp "$RUNNER_TEMP/latest.json" updates/latest.json
+          fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add updates/latest.json
+          git add updates
           git diff --cached --quiet || git commit -m "Publish update metadata for $GITHUB_REF_NAME"
           git push origin main
       - name: Final signing cleanup

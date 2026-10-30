@@ -6,6 +6,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -40,7 +41,6 @@ fun UpdateCard(updates: AppUpdates, locked: Boolean) {
             } }) { Text(if (busy) "处理中…" else "检查更新") }
             release?.let { item ->
                 Text("新版本 ${item.tag} · ${"%.1f".format(item.size / 1048576.0)} MB", fontWeight = FontWeight.SemiBold)
-                if (item.notes.isNotBlank()) Text(item.notes, style = MaterialTheme.typography.bodySmall)
                 download?.let { state ->
                     Text(state.message)
                     state.progress?.let { LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth()) }
@@ -52,6 +52,13 @@ fun UpdateCard(updates: AppUpdates, locked: Boolean) {
                     } }) { Text(if (locked) "专注结束后安装" else "校验并安装更新") }
                 } else {
                     Button(enabled = !busy && download?.progress == null, onClick = { action { updates.download(item); download = updates.downloadState(); message = "已开始下载，可离开此页面" } }) { Text("下载更新") }
+                }
+                if (item.notes.isNotBlank()) {
+                    var expanded by remember(item.tag) { mutableStateOf(false) }
+                    Text("更新说明", fontWeight = FontWeight.SemiBold)
+                    Text(item.notes.replace(Regex("(?m)^#{1,6}[ ]+"), "").replace("`", ""),
+                        style = MaterialTheme.typography.bodySmall, maxLines = if (expanded) Int.MAX_VALUE else 4, overflow = TextOverflow.Ellipsis)
+                    TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起说明" else "展开完整说明") }
                 }
             }
         }

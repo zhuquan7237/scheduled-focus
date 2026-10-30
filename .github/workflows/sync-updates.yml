@@ -1,0 +1,29 @@
+name: Sync stable update metadata
+on:
+  release:
+    types: [released, edited]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: update-metadata
+  cancel-in-progress: false
+jobs:
+  sync:
+    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Sync latest stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p updates
+          gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '{tag_name, body, draft, prerelease, assets: [.assets[] | {name, browser_download_url, size, digest}]}' > updates/latest.json
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add updates/latest.json
+          git diff --cached --quiet || git commit -m 'Sync latest stable Android release'
+          git push origin main

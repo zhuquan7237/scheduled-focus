@@ -18,6 +18,8 @@ class RuntimeIntegrationTest {
     private val context get() = instrumentation.targetContext
     private val store get() = FocusStore(context)
     private val automation get() = instrumentation.getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+    private val blockedPackage get() = "${context.packageName}.test"
+    private fun openBlockedApp() = shell("am start -W -n $blockedPackage/com.zhuquan.scheduledfocus.BlockedTestActivity")
     private var previousServices = ""
     private var previousAccessibility = "0"
 
@@ -54,7 +56,7 @@ class RuntimeIntegrationTest {
     }
 
     @Test fun onboardingEditorAndWhitelistHaveWorkingNavigation() {
-        shell("am start -W -n ${context.packageName}/.MainActivity")
+        shell("am start -W -f 0x10008000 -n ${context.packageName}/.MainActivity")
         await { node("你的每周时间表") != null }
         click("编辑")
         await { node("设置专注时段") != null }
@@ -119,29 +121,33 @@ class RuntimeIntegrationTest {
         assertTrue(RuntimeSupport.status(context).ready)
         RuntimeSupport.refresh(context)
 
-        shell("am start -W -a android.settings.SETTINGS")
-        await { foreground() == "com.android.settings" }
+        openBlockedApp()
+        await { foreground() == blockedPackage }
         waitUntil(start.toInstant().plusSeconds(3))
-        await { foreground() != "com.android.settings" }
+        await { foreground() != blockedPackage }
         assertTrue(ScheduleEngine.evaluate(store.read(), Instant.now(), zone).restricted)
 
-        shell("am start -W -a android.settings.SETTINGS")
-        await { foreground() != "com.android.settings" }
+        openBlockedApp()
+        await { foreground() != blockedPackage }
         // Let HOME's transition finish before launching the next task, like a launcher tap.
         SystemClock.sleep(1000)
         shell("am start -W -n $clockLauncher")
         await { foreground() == clockPkg }
         SystemClock.sleep(1500)
         assertEquals(clockPkg, foreground())
+        shell("am start -W -a android.settings.SETTINGS")
+        await { foreground() == "com.android.settings" }
+        SystemClock.sleep(1000)
+        assertEquals("System permission management must remain accessible", "com.android.settings", foreground())
         assertEquals(EditDecision.LOCKED, store.change { it.copy(enabled = false) })
 
-        shell("am start -W -n ${context.packageName}/.MainActivity")
+        shell("am start -W -f 0x10008000 -n ${context.packageName}/.MainActivity")
         await { foreground() == context.packageName }
         SystemClock.sleep(1500)
         assertEquals(context.packageName, foreground())
         waitUntil(end.toInstant().plusSeconds(3))
-        shell("am start -W -a android.settings.SETTINGS")
-        await { foreground() == "com.android.settings" }
+        openBlockedApp()
+        await { foreground() == blockedPackage }
         assertFalse(ScheduleEngine.evaluate(store.read(), Instant.now(), zone).restricted)
         assertEquals(EditDecision.SAVE, store.change { it.copy(enabled = false) })
 
@@ -157,8 +163,8 @@ class RuntimeIntegrationTest {
         shell("settings put secure enabled_accessibility_services ${context.packageName}/.FocusAccessibilityService")
         shell("settings put secure accessibility_enabled 1")
         await(10000) { FocusAccessibilityService.connected != null }
-        shell("am start -W -a android.settings.SETTINGS")
-        await { foreground() != "com.android.settings" }
+        openBlockedApp()
+        await { foreground() != blockedPackage }
     }
 
     private fun shell(command: String): String = ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(command)).bufferedReader().use { it.readText() }
