@@ -1,4 +1,4 @@
-param([switch]$EmulatorTests)
+param([switch]$EmulatorTests, [switch]$FullWeChatCycle)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $previousOutput = $env:FOCUS_BUILD_ROOT
@@ -13,7 +13,8 @@ try {
     Push-Location -LiteralPath $projectRoot
     try {
         $buildTasks = @(':app:testDebugUnitTest', ':app:lintDebug', ':app:assembleRelease')
-        if ($EmulatorTests) { $buildTasks += ':app:connectedDebugAndroidTest' }
+        if ($EmulatorTests -or $FullWeChatCycle) { $buildTasks += ':app:connectedDebugAndroidTest' }
+        if ($FullWeChatCycle) { $buildTasks += '-Pandroid.testInstrumentationRunnerArguments.fullWeChatCycle=true' }
         & (Join-Path $projectRoot 'gradlew.bat') @buildTasks --console=plain
         if ($LASTEXITCODE -ne 0) { throw 'Gradle checks or build failed.' }
         $deliveryDir = Join-Path $projectRoot 'dist'

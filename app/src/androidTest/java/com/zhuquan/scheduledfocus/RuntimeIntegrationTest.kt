@@ -36,8 +36,12 @@ class RuntimeIntegrationTest {
         } else shell("settings put secure enabled_accessibility_services $others")
         await { FocusAccessibilityService.connected == null }
         context.getSharedPreferences("focus_settings", Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences("wechat_cycle", Context.MODE_PRIVATE).edit().clear().commit()
         shell("input keyevent KEYCODE_WAKEUP")
         shell("wm dismiss-keyguard")
+        shell("input keyevent KEYCODE_HOME")
+        SystemClock.sleep(1200)
+        await { foreground() != WeChatPolicy.PACKAGE }
     }
 
     @After fun cleanup() {
@@ -53,6 +57,133 @@ class RuntimeIntegrationTest {
         val desired = FocusSettings(rules = listOf(rule), allowedPackages = setOf("one", "two"), onboardingStep = 2)
         assertEquals(EditDecision.SAVE, store.change { desired })
         assertEquals(desired, FocusStore(context).read())
+    }
+
+    @Test fun oldSettingsMigrateAndWarningStylePersists() {
+        context.getSharedPreferences("focus_settings", 0).edit().putString("snapshot",
+            "{\"enabled\":false,\"onboarding\":4,\"rules\":[],\"allowed\":[]}").commit()
+        assertEquals(WarningStyle(), store.read().warning)
+        assertTrue(store.read().hideRecentTask)
+        val style = WarningStyle("记住你的目标", "一次专注，一次靠近", theme = 1, font = 2, size = 40, seconds = 9)
+        assertEquals(EditDecision.SAVE, store.change { it.copy(warning = style, hideRecentTask = false) })
+        assertEquals(style, FocusStore(context).read().warning)
+        assertFalse(FocusStore(context).read().hideRecentTask)
+    }
+
+    @Test fun hiddenRecentTaskRemovalDoesNotDisconnectService() {
+        enableActiveTestSchedule()
+        shell("am start -W -f 0x10008000 -n ${context.packageName}/.MainActivity")
+        await { foreground() == context.packageName }
+        val tasks = context.getSystemService(android.app.ActivityManager::class.java).appTasks
+        assertTrue(tasks.isNotEmpty())
+        assertTrue(tasks.any { it.taskInfo.baseIntent.flags and android.content.Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS != 0 })
+        tasks.forEach { it.finishAndRemoveTask() }
+        SystemClock.sleep(1000)
+        assertNotNull("Accessibility binding must survive removal of the UI task", FocusAccessibilityService.connected)
+        openBlockedApp()
+        await { foreground() != blockedPackage }
+    }
+
+    @Test fun customWarningAppearsInActualOverlay() {
+        val headline = "去兑现你写下的目标。"
+        store.change { it.copy(warning = WarningStyle(headline, "专注这一刻，为未来的自己负责。", theme = 1, size = 34, seconds = 10)) }
+        enableActiveTestSchedule()
+        openBlockedApp()
+        await { foreground() != blockedPackage }
+        await { FocusAccessibilityService.connected?.warningView != null }
+        instrumentation.runOnMainSync {
+            val view = FocusAccessibilityService.connected!!.warningView as android.view.ViewGroup
+            assertTrue(view.isAttachedToWindow)
+            assertTrue((0 until view.childCount).any { (view.getChildAt(it) as? android.widget.TextView)?.text?.toString() == headline })
+        }
+        shell("screencap -p /sdcard/focus-warning-custom.png")
+    }
+
+    @Test fun warningPresetCanBeSelectedAndSavedWithoutTyping() {
+        store.change { it.copy(onboardingStep = 4) }
+        shell("am start -W -f 0x10008000 -n ${context.packageName}/.MainActivity")
+        await { foreground() == context.packageName }
+        await { node("把时间留给重要的事") != null }
+        for (attempt in 0..10) {
+            if (node("自定义标语与警示样式")?.isVisibleToUser == true) break
+            shell("input swipe 500 950 500 680 300")
+            SystemClock.sleep(300)
+        }
+        click("自定义标语与警示样式")
+        click("强警醒")
+        shell("screencap -p /sdcard/focus-warning-presets.png")
+        click("保存警示")
+        await { FocusStore(context).read().warning == WarningPresets.all.first { it.name == "强警醒" }.style }
+    }
+
+    @Test fun weChatCallExemptionAndPersistentCooldown() {
+        requireWeChatFixture()
+        enableActiveTestSchedule()
+        shell("am start -W -f 0x14000000 -n com.tencent.mm/.plugin.voip.ui.VideoActivity")
+        await { FocusAccessibilityService.connected?.lastCheck?.contains("wechat=CALL") == true }
+        assertEquals(WeChatAccess.READY, WeChatRuntime(context).evaluate(false).access)
+        shell("am start -W -f 0x14000000 -n com.tencent.mm/.ui.LauncherUI")
+        await { FocusAccessibilityService.connected?.lastCheck?.contains("wechat=USING") == true }
+        val cycle = WeChatRuntime(context).evaluate(false)
+        assertTrue(cycle.remainingMs in 115_000..120_000)
+        assertEquals(cycle.cycle, WeChatRuntime(context).evaluate(true).cycle)
+        seedWeChatEnd(SystemClock.elapsedRealtime() - 1000)
+        await { foreground() != WeChatPolicy.PACKAGE }
+        assertEquals(WeChatAccess.COOLDOWN, WeChatRuntime(context).evaluate(false).access)
+        // Finish the HOME animation before simulating the next independent incoming call.
+        SystemClock.sleep(1200)
+        shell("am start -W -f 0x14000000 -n com.tencent.mm/.plugin.voip.ui.VideoActivity")
+        await { FocusAccessibilityService.connected?.lastCheck?.contains("wechat=CALL") == true }
+        SystemClock.sleep(1000)
+        assertEquals(WeChatPolicy.PACKAGE, foreground())
+        shell("am start -W -f 0x14000000 -n com.tencent.mm/.ui.LauncherUI")
+        await { foreground() != WeChatPolicy.PACKAGE }
+        seedWeChatEnd(SystemClock.elapsedRealtime() - WeChatPolicy.REST_MS - 1000)
+        assertEquals(WeChatAccess.READY, WeChatRuntime(context).evaluate(false).access)
+        SystemClock.sleep(1000)
+        assertEquals(WeChatAccess.READY, WeChatRuntime(context).evaluate(false).access)
+        shell("am start -W -f 0x14000000 -n com.tencent.mm/.ui.LauncherUI")
+        await { FocusAccessibilityService.connected?.lastCheck?.contains("wechat=USING") == true }
+        assertTrue(WeChatRuntime(context).evaluate(false).remainingMs > 115_000)
+    }
+
+    @Test fun fullWeChatTwoPlusFiveMinuteCycle() {
+        Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("fullWeChatCycle") == "true")
+        requireWeChatFixture()
+        enableActiveTestSchedule()
+        shell("am start -W -f 0x14000000 -n com.tencent.mm/.ui.LauncherUI")
+        await { WeChatRuntime(context).evaluate(false).access == WeChatAccess.USING }
+        val initial = WeChatRuntime(context).evaluate(false).cycle
+        while (SystemClock.elapsedRealtime() < initial.endsAt + 1500) SystemClock.sleep(500)
+        await { foreground() != WeChatPolicy.PACKAGE }
+        assertEquals(WeChatAccess.COOLDOWN, WeChatRuntime(context).evaluate(false).access)
+        shell("am start -W -f 0x14000000 -n com.tencent.mm/.ui.LauncherUI")
+        await { foreground() != WeChatPolicy.PACKAGE }
+        while (SystemClock.elapsedRealtime() < initial.endsAt + WeChatPolicy.REST_MS + 1500) SystemClock.sleep(500)
+        assertEquals(WeChatAccess.READY, WeChatRuntime(context).evaluate(false).access)
+        SystemClock.sleep(3000)
+        assertEquals(WeChatAccess.READY, WeChatRuntime(context).evaluate(false).access)
+        shell("am start -W -f 0x14000000 -n com.tencent.mm/.ui.LauncherUI")
+        await { FocusAccessibilityService.connected?.lastCheck?.contains("wechat=USING") == true }
+        assertTrue(WeChatRuntime(context).evaluate(false).remainingMs > 115_000)
+    }
+
+    private fun requireWeChatFixture() {
+        val info = runCatching { context.packageManager.getApplicationInfo(WeChatPolicy.PACKAGE, 0) }.getOrNull()
+        Assume.assumeTrue("Install the explicit test-only fixture on the emulator first", info != null && info.flags and android.content.pm.ApplicationInfo.FLAG_TEST_ONLY != 0)
+    }
+    private fun seedWeChatEnd(end: Long) {
+        context.getSharedPreferences("wechat_cycle", 0).edit().putLong("ends", end)
+            .putLong("boot", android.provider.Settings.Global.getInt(context.contentResolver, android.provider.Settings.Global.BOOT_COUNT, 0).toLong()).commit()
+    }
+    private fun enableActiveTestSchedule() {
+        val minute = LocalTime.now().let { it.hour * 60 + it.minute }
+        store.change(true) { it.copy(enabled = true, onboardingStep = 4, rules = listOf(FocusRule(
+            title = "runtime test", startMinute = (minute + 1439) % 1440, endMinute = (minute + 30) % 1440, days = DayOfWeek.entries.toSet()))) }
+        shell("appops set ${context.packageName} SCHEDULE_EXACT_ALARM allow")
+        shell("settings put secure enabled_accessibility_services ${context.packageName}/.FocusAccessibilityService")
+        shell("settings put secure accessibility_enabled 1")
+        await(10000) { FocusAccessibilityService.connected != null }
     }
 
     @Test fun onboardingEditorAndWhitelistHaveWorkingNavigation() {
@@ -98,6 +229,8 @@ class RuntimeIntegrationTest {
         assertEquals(EditDecision.LOCKED, store.change(true) { it.copy(enabled = false) })
         assertEquals(EditDecision.LOCKED, store.change(true) { it.copy(allowedPackages = setOf("bypass")) })
         assertEquals(EditDecision.LOCKED, store.change(true) { it.copy(rules = emptyList()) })
+        assertEquals(EditDecision.LOCKED, store.change(true) { it.copy(warning = WarningStyle(headline = "修改")) })
+        assertEquals(EditDecision.LOCKED, store.change(true) { it.copy(hideRecentTask = false) })
         assertEquals(active, store.read())
     }
 
@@ -151,7 +284,9 @@ class RuntimeIntegrationTest {
         assertFalse(ScheduleEngine.evaluate(store.read(), Instant.now(), zone).restricted)
         assertEquals(EditDecision.SAVE, store.change { it.copy(enabled = false) })
 
-        restoreServices()
+        val others = previousServices.split(':').filter { it.isNotBlank() && !it.startsWith("${context.packageName}/") }.joinToString(":")
+        if (others.isBlank()) shell("settings delete secure enabled_accessibility_services")
+        else shell("settings put secure enabled_accessibility_services $others")
         await { FocusAccessibilityService.connected == null }
         assertFalse(RuntimeSupport.status(context).ready)
     }

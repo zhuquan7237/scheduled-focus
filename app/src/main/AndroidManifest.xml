@@ -6,6 +6,7 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <queries>
+        <package android:name="com.tencent.mm" />
         <intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent>
         <intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.HOME" /></intent>
         <intent><action android:name="android.intent.action.DIAL" /><data android:scheme="tel" /></intent>
@@ -15,7 +16,7 @@
         <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.updates" android:exported="false" android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/update_paths" />
         </provider>
-        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop">
+        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop" android:excludeFromRecents="true">
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
         </activity>
         <service android:name=".FocusAccessibilityService" android:exported="true" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:label="定时专注 · 应用拦截">

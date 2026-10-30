@@ -22,6 +22,8 @@ data class FocusSettings(
     val onboardingStep: Int = 0,
     val rules: List<FocusRule> = defaults(),
     val allowedPackages: Set<String> = emptySet(),
+    val warning: WarningStyle = WarningStyle(),
+    val hideRecentTask: Boolean = true,
 ) {
     companion object {
         fun defaults() = listOf(

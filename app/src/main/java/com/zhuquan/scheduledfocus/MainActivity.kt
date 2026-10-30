@@ -52,6 +52,7 @@ private val DayNames = listOf("一", "二", "三", "四", "五", "六", "日")
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        applyRecentVisibility()
         WindowCompat.getInsetsController(window, window.decorView).apply {
             isAppearanceLightStatusBars = true
             isAppearanceLightNavigationBars = true
@@ -67,7 +68,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onResume() { super.onResume(); RuntimeSupport.refresh(this) }
+    override fun onResume() { super.onResume(); applyRecentVisibility(); RuntimeSupport.refresh(this) }
+
+    private fun applyRecentVisibility() {
+        val hidden = FocusStore(this).read().hideRecentTask
+        getSystemService(android.app.ActivityManager::class.java).appTasks.forEach { it.setExcludeFromRecents(hidden) }
+    }
 
     @Composable
     private fun FocusApp() {
@@ -78,6 +84,7 @@ class MainActivity : ComponentActivity() {
         var tab by rememberSaveable { mutableIntStateOf(0) }
         var message by remember { mutableStateOf<String?>(null) }
         var pending by remember { mutableStateOf<((FocusSettings) -> FocusSettings)?>(null) }
+        var warningEditor by remember { mutableStateOf(false) }
         val updates = remember { AppUpdates(this) }
         LaunchedEffect(Unit) {
             if (updates.due()) runCatching { withContext(Dispatchers.IO) { updates.check() } }
@@ -105,6 +112,7 @@ class MainActivity : ComponentActivity() {
                     EditDecision.CONFIRM_IMMEDIATE -> pending = transform
                     EditDecision.SAVE -> {
                         settings = store.read()
+                        applyRecentVisibility()
                         RuntimeSupport.refresh(this@MainActivity)
                         status = RuntimeSupport.status(this@MainActivity)
                     }
@@ -155,17 +163,18 @@ class MainActivity : ComponentActivity() {
                         onToggle = { value ->
                             if (value && !status.ready) message = "请先在运行保障中完成无障碍和准时触发授权。"
                             else change { it.copy(enabled = value) }
-                        }, onStatus = { tab = 3 })
+                        }, onStatus = { tab = 3 }, onWarning = { warningEditor = true })
                     1 -> ScheduleScreen(settings.rules, locked, onSave = { rule ->
                         change { old -> old.copy(rules = if (old.rules.any { it.id == rule.id }) old.rules.map { if (it.id == rule.id) rule else it } else old.rules + rule) }
                     }, onDelete = { id -> change { old -> old.copy(rules = old.rules.filterNot { it.id == id }) } })
                     2 -> AllowlistScreen(settings.allowedPackages, locked, onToggle = { pkg, checked ->
                         change { old -> old.copy(allowedPackages = if (checked) old.allowedPackages + pkg else old.allowedPackages - pkg) }
                     })
-                    3 -> RuntimeScreen(status, onMessage = { message = it })
+                    3 -> RuntimeScreen(status, settings.hideRecentTask, locked, onRecent = { hidden -> change { it.copy(hideRecentTask = hidden) } }, onMessage = { message = it })
                 }
             }
         }
+        if (warningEditor) WarningEditor(settings.warning, locked, dismiss = { warningEditor = false }, save = { style -> change { it.copy(warning = style) }; warningEditor = false })
         if (pending != null) AlertDialog(onDismissRequest = { pending = null },
             title = { Text("保存后将立即进入限制") },
             text = {
@@ -181,7 +190,7 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun TodayScreen(settings: FocusSettings, state: FocusState, now: Instant, zone: ZoneId, status: RuntimeStatus, onboarding: Boolean, onToggle: (Boolean) -> Unit, onStatus: () -> Unit) {
+    private fun TodayScreen(settings: FocusSettings, state: FocusState, now: Instant, zone: ZoneId, status: RuntimeStatus, onboarding: Boolean, onToggle: (Boolean) -> Unit, onStatus: () -> Unit, onWarning: () -> Unit) {
         val date = now.atZone(zone).toLocalDate()
         val rows = ScheduleEngine.today(settings.rules, date, zone)
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -211,6 +220,21 @@ class MainActivity : ComponentActivity() {
                         Switch(checked = settings.enabled, onCheckedChange = onToggle, enabled = !state.restricted)
                     }
                 }
+            }
+            if (!onboarding) item {
+                Surface(shape = RoundedCornerShape(18.dp)) { Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("微信 · 2 分钟使用 / 5 分钟冷却", fontWeight = FontWeight.Bold)
+                    val cycle = remember { WeChatRuntime(this@MainActivity) }.evaluate(opened = false)
+                    Text(when {
+                        !state.restricted -> "当前不在限制时段，微信正常使用"
+                        WeChatPolicy.PACKAGE in settings.allowedPackages -> "微信已在白名单，无需临时额度"
+                        cycle.access == WeChatAccess.USING -> "本轮剩余 ${durationText(cycle.remainingMs)}，离开不会暂停"
+                        cycle.access == WeChatAccess.COOLDOWN -> "冷却剩余 ${durationText(cycle.remainingMs)}"
+                        else -> "已准备好，打开微信普通页面才开始计时"
+                    }, color = Muted, fontSize = 13.sp)
+                    Text("通话页面单独放行；具体微信版本的来电兼容性需真机验证。", color = Muted, fontSize = 12.sp)
+                    OutlinedButton(onClick = onWarning, modifier = Modifier.fillMaxWidth()) { Text(if (state.restricted) "预览专注警示" else "自定义标语与警示样式") }
+                } }
             }
             item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("今日安排", fontSize = 19.sp, fontWeight = FontWeight.Bold); Text("${rows.size} 个时段", color = Muted) } }
             if (rows.isEmpty()) item { Note("今天没有安排限制时段。") }
@@ -333,7 +357,7 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun RuntimeScreen(status: RuntimeStatus, onMessage: (String) -> Unit) {
+    private fun RuntimeScreen(status: RuntimeStatus, hideRecentTask: Boolean, locked: Boolean, onRecent: (Boolean) -> Unit, onMessage: (String) -> Unit) {
         var disclosure by remember { mutableStateOf(false) }
         val listState = rememberLazyListState()
         val scope = rememberCoroutineScope()
@@ -364,6 +388,10 @@ class MainActivity : ComponentActivity() {
             }
             item { Text("能力边界：应用内不提供提前解除。系统强行停止、撤权、卸载或修改手机时间可能影响限制；本工具无法阻止这些系统操作。重启后需要首次解锁才能恢复本机规则。", color = Muted, fontSize = 12.sp) }
             item { UpdateCard(remember { AppUpdates(this@MainActivity) }, ScheduleEngine.evaluate(FocusStore(this@MainActivity).read(), Instant.now(), ZoneId.systemDefault()).restricted) }
+            item { Surface(shape = RoundedCornerShape(20.dp)) { Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row { Text("从最近任务隐藏卡片", modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold); Switch(hideRecentTask, onCheckedChange = onRecent, enabled = !locked) }
+                Text("默认开启，减少从最近任务划掉本应用的机会。桌面图标、运行通知和系统权限入口保留。无障碍服务独立于页面运行；HyperOS 清理策略仍需真机检查，系统强停、撤权和卸载仍能解除限制。", color = Muted, fontSize = 13.sp)
+            } } }
         }
         if (disclosure) AlertDialog(onDismissRequest = { disclosure = false }, title = { Text("开启应用拦截权限") },
             text = { Text("无障碍权限用于识别前台应用并返回桌面。不读取页面文字，不上传数据。\n\n继续后，请在无障碍 → 已下载的应用中开启「定时专注」。若系统提示受限设置，请在应用详情中允许受限设置后重试。") },

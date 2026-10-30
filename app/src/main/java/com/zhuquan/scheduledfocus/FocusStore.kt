@@ -19,6 +19,10 @@ class FocusStore(context: Context) {
         return FocusSettings(
             enabled = json.getBoolean("enabled"),
             onboardingStep = json.optInt("onboarding", 0),
+            hideRecentTask = json.optBoolean("hideRecents", true),
+            warning = json.optJSONObject("warning")?.let { row -> WarningStyle(
+                row.optString("headline", WarningStyle().headline), row.optString("reminder", WarningStyle().reminder),
+                row.optInt("theme", 0), row.optInt("font", 0), row.optInt("size", 32), row.optInt("seconds", 6)) } ?: WarningStyle(),
             rules = (0 until rules.length()).map { index ->
                 val row = rules.getJSONObject(index)
                 val days = row.getJSONArray("days")
@@ -41,6 +45,9 @@ class FocusStore(context: Context) {
                     .put("days", JSONArray(rule.days.map { it.value }.sorted())))
             }
             val snapshot = JSONObject().put("enabled", after.enabled).put("onboarding", after.onboardingStep)
+                .put("hideRecents", after.hideRecentTask)
+                .put("warning", JSONObject().put("headline", after.warning.headline).put("reminder", after.warning.reminder)
+                    .put("theme", after.warning.theme).put("font", after.warning.font).put("size", after.warning.size).put("seconds", after.warning.seconds))
                 .put("rules", rules).put("allowed", JSONArray(after.allowedPackages.sorted()))
             check(prefs.edit().putString("snapshot", snapshot.toString()).commit()) { "保存失败，请重试" }
         }
