@@ -26,6 +26,10 @@
 
 微信规则、通话兼容范围、警示定制和测试夹具说明见 [v0.3.0 使用说明](docs/V030.md)。
 
+| 一键套用预设 | 警示预览 | 实际拦截卡片 |
+| --- | --- | --- |
+| ![六套警示预设](docs/screenshots/v0.3/warning-presets.png) | ![警示样式预览](docs/screenshots/v0.3/warning-preview.png) | ![实际拦截卡片](docs/screenshots/v0.3/warning-overlay.png) |
+
 独立的 Kotlin / Jetpack Compose 应用，包名 `com.zhuquan.scheduledfocus`。Android 8.0（API 26）及以上，当前 compile / target SDK 35。
 
 ## 使用
