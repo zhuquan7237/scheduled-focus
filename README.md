@@ -2,9 +2,9 @@
 
 **一次安排，到点专注，结束恢复。** 以每周时间表为核心的 Android 自律工具，无需每天手动开启番茄钟。
 
-[版本与下载](https://github.com/zhuquan7237/scheduled-focus/releases) · [使用与隐私](PRIVACY.md) · [反馈问题](https://github.com/zhuquan7237/scheduled-focus/issues) · [参与开发](CONTRIBUTING.md)
+[下载最新版 v0.2.2](https://github.com/zhuquan7237/scheduled-focus/releases/latest) · [使用与隐私](PRIVACY.md) · [反馈问题](https://github.com/zhuquan7237/scheduled-focus/issues) · [参与开发](CONTRIBUTING.md)
 
-> 个人自用版本：v0.2.0 和 v0.2.1 曾被 Google Play Protect 联网扫描标记，原因尚未确认，不能称为误报或代表通过安全审核。用户选择个人自用后，已在模拟器中通过系统提供的手动确认完成覆盖安装，没有关闭系统保护。详见 [安装检查记录](docs/INSTALL_REVIEW.md)。
+> 个人自用版本：包括 v0.2.2 在内的版本曾被 Google Play Protect 联网扫描标记，原因尚未确认，不能称为误报或代表通过安全审核。已在模拟器中通过系统提供的手动确认完成 0.2.1 → 0.2.2 覆盖安装，没有关闭系统保护；时间表和白名单保留。详见 [安装检查记录](docs/INSTALL_REVIEW.md)。
 
 | 今日 | 时间表 | 白名单 | 运行保障与更新 |
 | --- | --- | --- | --- |

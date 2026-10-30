@@ -1,6 +1,6 @@
 # 安装检查与待审核事项
 
-截至 2026-10-30，v0.2.0 和 v0.2.1 均未通过 Google Android 模拟器中的 Play Protect 联网扫描。两者保持预发布，普通自动更新不会接收它们。用户明确选择个人自用、不提交 Google 申诉，后续验收记录区分“扫描分类”和“用户确认后的实际安装”。
+截至 2026-10-30，v0.2.0、v0.2.1、v0.2.2 均被 Google Android 模拟器中的 Play Protect 联网扫描标记。前两者保持预发布；v0.2.2 按个人自用发布，普通更新接收该正式版。本项目不提交 Google 申诉，验证记录区分“扫描分类”和“用户确认后的实际安装”。
 
 ## v0.2.1 的具体证据
 
@@ -18,6 +18,15 @@
 2026-10-30 11:08（模拟器 Asia/Shanghai），在系统提供的告警详情中主动选择继续安装后，安装器显示 `App updated`。`dumpsys package` 确认为 versionCode 3 / versionName 0.2.1，证明应用内下载的真实 GitHub 附件已完成覆盖安装。没有关闭或修改 Play Protect 扫描设置。截图：`screenshots/v0.2/personal-install-v021.png`。
 
 这个结果只证明个人主动确认后的安装流程可用，不改变扫描分类，也不能据此称为误报或通过 Google 审核。用户不要求提交申诉，因此未向 Google 发送复核申请。
+
+## v0.2.2 最终更新验证
+
+- GitHub Actions 构建与签名发布运行 `40996128477` 成功；仓库检查 `40996124832` 成功。
+- 自动同步正式更新信息运行 `40997069864` 和手动复核运行 `40997071536` 均成功，`updates/latest.json` 指向正式版 v0.2.2。
+- 最终发布包 SHA256：`268e772af410cd926194ae242437e4b7d7a159c55b5ed9b564bebf7cbf4d69b6`，6555282 字节；签名与前版一致，ZIP 16 KB 对齐检查通过。
+- 在真实发布的 v0.2.1 中检查更新，显示 v0.2.2，应用内下载、校验后进入系统安装。下载暂停时有网络等待提示，恢复网络后可继续。最终安装阶段使用了电脑已有代理供模拟器联网，不能据此保证所有网络下直连 GitHub 都可用。
+- 2026-10-30 12:53:37（模拟器本地时间）扫描再次返回 `POTENTIALLY_UNWANTED / generic_malware`。主动在系统告警详情中确认后，安装器显示 App updated，实际安装版本递增为 versionCode 4 / 0.2.2。未关闭扫描设置。
+- 打开新版后，自定义 `Upgrade-QA` 时段、排除星期五的重复规则、时钟白名单、已启用状态均保留；手动检查显示已是最新版本。截图位于 `screenshots/v0.2/` 的 `stable-update-found`、`personal-install-v022`、`after-upgrade-rules`、`after-upgrade-allowlist` 和 `updates`。
 
 ## 已完成的源码检查
 
