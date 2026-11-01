@@ -10,8 +10,8 @@ android {
         applicationId = "com.zhuquan.scheduledfocus"
         minSdk = 26
         targetSdk = 35
-        versionCode = providers.gradleProperty("focusVersionCode").orNull?.toInt() ?: 5
-        versionName = providers.gradleProperty("focusVersionName").orNull ?: "0.3.0"
+        versionCode = providers.gradleProperty("focusVersionCode").orNull?.toInt() ?: 6
+        versionName = providers.gradleProperty("focusVersionName").orNull ?: "0.4.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     signingConfigs {

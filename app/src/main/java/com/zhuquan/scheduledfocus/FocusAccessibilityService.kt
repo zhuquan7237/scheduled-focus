@@ -25,7 +25,7 @@ class FocusAccessibilityService : AccessibilityService() {
     private var previousState: FocusState? = null
     private var banner: View? = null
     private var timerBadge: TextView? = null
-    private lateinit var weChat: WeChatRuntime
+    private lateinit var appCycles: AppCycleRuntime
     private val weChatWindows = mutableMapOf<Int, String>()
     private var unknownWeChatWindow = -1
     private var unknownWeChatSince = 0L
@@ -52,7 +52,7 @@ class FocusAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         store = FocusStore(this)
-        weChat = WeChatRuntime(this)
+        appCycles = AppCycleRuntime(this)
         weChatWindows.clear()
         observedPackage = null
         unknownWeChatWindow = -1
@@ -97,7 +97,7 @@ class FocusAccessibilityService : AccessibilityService() {
             observedPackage = foreground
         }
         if (foreground in settings.allowedPackages || foreground in EssentialApps.packages(this)) { clearTimer(); lastCheck += "; allowed"; return }
-        var detail = state.currentEnd?.let { "专注至 ${formatMoment(it)} · 仅白名单可用" } ?: "当前时间表连续限制 · 仅白名单可用"
+        var detail = state.currentEnd?.let { "专注至 ${formatMoment(it)} · 正按应用规则限制" } ?: "当前时间表连续限制 · 正按应用规则执行"
         if (foreground == WeChatPolicy.PACKAGE) {
             val screen = root?.let { weChatWindows[it.windowId] ?: it.className?.toString() }
             // Give an incoming call's activity event time to replace the underlying chat window.
@@ -110,12 +110,18 @@ class FocusAccessibilityService : AccessibilityService() {
                 if (id != unknownWeChatWindow) { unknownWeChatWindow = id; unknownWeChatSince = SystemClock.elapsedRealtime() }
                 if (SystemClock.elapsedRealtime() - unknownWeChatSince < 500) { lastCheck += "; waiting for window metadata"; return }
             } else unknownWeChatWindow = -1
-            val decision = weChat.evaluate(opened = true, call = WeChatPolicy.isCallActivity(screen))
-            lastCheck += "; screen=$screen; wechat=${decision.access}"
+            val isCall = WeChatPolicy.isCallActivity(screen)
+            lastCheck += "; screen=$screen"
+            if (isCall) { clearBanner(); clearTimer(); lastCheck += "; wechat=CALL"; return }
+        }
+        settings.appCycles[foreground]?.let { rule ->
+            val decision = appCycles.evaluate(foreground, rule, opened = true)
+            lastCheck += "; cycle=${decision.access}"
+            if (foreground == WeChatPolicy.PACKAGE) lastCheck += "; wechat=${decision.access}"
             when (decision.access) {
                 WeChatAccess.CALL -> { clearBanner(); clearTimer(); return }
-                WeChatAccess.USING -> { clearBanner(); showTimer(decision.remainingMs); return }
-                WeChatAccess.COOLDOWN -> detail = "微信 2 分钟已用完 · 冷却剩余 ${durationText(decision.remainingMs)}\n冷却后等你下次打开才开始计时，通话页面例外"
+                WeChatAccess.USING -> { clearBanner(); showTimer(foreground, decision.remainingMs); return }
+                WeChatAccess.COOLDOWN -> detail = "本轮 ${rule.useMinutes} 分钟已用完 · 冷却剩余 ${durationText(decision.remainingMs)}\n冷却 ${rule.restMinutes} 分钟后，等下次打开再开始计时"
                 WeChatAccess.READY -> Unit
             }
         }
@@ -146,7 +152,7 @@ class FocusAccessibilityService : AccessibilityService() {
         WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE, PixelFormat.TRANSLUCENT)
 
-    private fun showTimer(ms: Long) {
+    private fun showTimer(pkg: String, ms: Long) {
         val view = timerBadge ?: TextView(this).apply {
             textSize = 14f; setTextColor(Color.rgb(255, 216, 75)); setPadding(24, 16, 24, 16)
             background = GradientDrawable().apply { setColor(Color.rgb(31, 27, 19)); cornerRadius = 24f }
@@ -154,7 +160,8 @@ class FocusAccessibilityService : AccessibilityService() {
             val params = overlayParams(WindowManager.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; y = (48 * resources.displayMetrics.density).toInt() }
             runCatching { getSystemService(WindowManager::class.java).addView(text, params); timerBadge = text }
         }
-        view.text = "微信临时使用 ${durationText(ms)} · 离开不暂停"
+        val label = runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString() }.getOrDefault("此应用")
+        view.text = "$label 可用 ${durationText(ms)} · 离开不暂停"
     }
 
     private fun clearTimer() {

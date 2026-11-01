@@ -55,7 +55,7 @@ object RuntimeSupport {
         if (!settings.enabled) { manager.cancel(1); return }
         if (Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         val ready = status(context).ready
-        val title = if (!ready) "限制未就绪" else if (state.restricted) "专注时段 · 仅白名单可用" else "时间表已启用"
+        val title = if (!ready) "限制未就绪" else if (state.restricted) "专注时段 · 按应用规则执行" else "时间表已启用"
         val text = if (!ready) "请打开运行保障，检查无障碍服务和准时触发权限"
             else if (state.restricted) state.currentEnd?.let { "${formatMoment(it)} 结束，应用内无法提前解除" } ?: "时间表连续覆盖，当前没有空闲间隔"
             else state.nextTransition?.let { "下次开始：${formatMoment(it)}" } ?: "尚未设置限制时段"

@@ -9,6 +9,7 @@ import java.time.ZoneId
 
 /** One persisted snapshot: settings never become partially updated. All writes recheck the lock. */
 class FocusStore(context: Context) {
+    private val appContext = context.applicationContext
     private val prefs = context.applicationContext.getSharedPreferences("focus_settings", Context.MODE_PRIVATE)
 
     fun read(): FocusSettings {
@@ -20,6 +21,9 @@ class FocusStore(context: Context) {
             enabled = json.getBoolean("enabled"),
             onboardingStep = json.optInt("onboarding", 0),
             hideRecentTask = json.optBoolean("hideRecents", true),
+            appCycles = json.optJSONObject("appCycles")?.let { rows ->
+                rows.keys().asSequence().associateWith { pkg -> rows.getJSONObject(pkg).let { AppCycleRule(it.getInt("use"), it.getInt("rest")) } }
+            } ?: mapOf(WeChatPolicy.PACKAGE to AppCycleRule()),
             warning = json.optJSONObject("warning")?.let { row -> WarningStyle(
                 row.optString("headline", WarningStyle().headline), row.optString("reminder", WarningStyle().reminder),
                 row.optInt("theme", 0), row.optInt("font", 0), row.optInt("size", 32), row.optInt("seconds", 6)) } ?: WarningStyle(),
@@ -45,11 +49,14 @@ class FocusStore(context: Context) {
                     .put("days", JSONArray(rule.days.map { it.value }.sorted())))
             }
             val snapshot = JSONObject().put("enabled", after.enabled).put("onboarding", after.onboardingStep)
+                .put("appCycles", JSONObject().apply { after.appCycles.forEach { (pkg, rule) -> put(pkg, JSONObject().put("use", rule.useMinutes).put("rest", rule.restMinutes)) } })
                 .put("hideRecents", after.hideRecentTask)
                 .put("warning", JSONObject().put("headline", after.warning.headline).put("reminder", after.warning.reminder)
                     .put("theme", after.warning.theme).put("font", after.warning.font).put("size", after.warning.size).put("seconds", after.warning.seconds))
                 .put("rules", rules).put("allowed", JSONArray(after.allowedPackages.sorted()))
             check(prefs.edit().putString("snapshot", snapshot.toString()).commit()) { "保存失败，请重试" }
+            (before.appCycles.keys + after.appCycles.keys).filter { before.appCycles[it] != after.appCycles[it] || (it in before.allowedPackages) != (it in after.allowedPackages) }
+                .forEach { AppCycleRuntime(appContext).reset(it) }
         }
         decision
     }

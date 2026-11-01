@@ -24,6 +24,7 @@ data class FocusSettings(
     val allowedPackages: Set<String> = emptySet(),
     val warning: WarningStyle = WarningStyle(),
     val hideRecentTask: Boolean = true,
+    val appCycles: Map<String, AppCycleRule> = mapOf(WeChatPolicy.PACKAGE to AppCycleRule()),
 ) {
     companion object {
         fun defaults() = listOf(

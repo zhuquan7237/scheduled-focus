@@ -144,7 +144,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             } else NavigationBar(containerColor = Color.White) {
-                listOf("今日", "时间表", "白名单", "运行保障").forEachIndexed { index, title ->
+                listOf("今日", "时间表", "应用规则", "运行保障").forEachIndexed { index, title ->
                     NavigationBarItem(selected = tab == index, onClick = { tab = index },
                         icon = { FocusNavIcon(index) }, label = { Text(title) })
                 }
@@ -156,18 +156,22 @@ class MainActivity : ComponentActivity() {
                     Spacer(Modifier.height(8.dp))
                     Text(if (onboarding && settings.onboardingStep == 3) "准备好，开始专注" else listOf("把时间留给重要的事", "你的每周时间表", "只留下必要应用", "让限制准时发生")[visibleTab], fontSize = 27.sp, fontWeight = FontWeight.Bold)
                 }
-                if (locked) Note("限制期间，时间表、白名单和总开关已锁定。", Modifier.padding(horizontal = 20.dp))
+                if (locked) Note("限制期间，时间表、应用规则和总开关已锁定。", Modifier.padding(horizontal = 20.dp))
                 if (onboarding && settings.onboardingStep == 3 && !status.ready) Note("限制未就绪，请返回上一步完成授权后再启用。", Modifier.padding(horizontal = 20.dp))
                 when (visibleTab) {
                     0 -> TodayScreen(settings, state, now, zone, status, onboarding,
                         onToggle = { value ->
                             if (value && !status.ready) message = "请先在运行保障中完成无障碍和准时触发授权。"
                             else change { it.copy(enabled = value) }
-                        }, onStatus = { tab = 3 }, onWarning = { warningEditor = true })
+                        }, onStatus = { tab = 3 }, onWarning = { warningEditor = true }, onApps = { tab = 2 })
                     1 -> ScheduleScreen(settings.rules, locked, onSave = { rule ->
                         change { old -> old.copy(rules = if (old.rules.any { it.id == rule.id }) old.rules.map { if (it.id == rule.id) rule else it } else old.rules + rule) }
                     }, onDelete = { id -> change { old -> old.copy(rules = old.rules.filterNot { it.id == id }) } })
-                    2 -> AllowlistScreen(settings.allowedPackages, locked, onToggle = { pkg, checked ->
+                    2 -> AllowlistScreen(settings.allowedPackages, settings.appCycles, locked, onRule = { pkg, mode, rule ->
+                        change { old -> old.copy(
+                            allowedPackages = if (mode == AppRuleMode.ALLOWED) old.allowedPackages + pkg else old.allowedPackages - pkg,
+                            appCycles = when { rule != null -> old.appCycles + (pkg to rule); mode == AppRuleMode.ALLOWED -> old.appCycles; else -> old.appCycles - pkg }) }
+                    }, onToggle = { pkg, checked ->
                         change { old -> old.copy(allowedPackages = if (checked) old.allowedPackages + pkg else old.allowedPackages - pkg) }
                     })
                     3 -> RuntimeScreen(status, settings.hideRecentTask, locked, onRecent = { hidden -> change { it.copy(hideRecentTask = hidden) } }, onMessage = { message = it })
@@ -182,7 +186,7 @@ class MainActivity : ComponentActivity() {
                 val nextState = proposal?.let { ScheduleEngine.evaluate(it, Instant.now(), ZoneId.systemDefault()) }
                 Text(if (nextState?.restricted == true && nextState.currentEnd == null)
                     "新时间表连续覆盖整周，没有空闲间隔。确认后，应用内将一直无法修改或关闭限制。请确认这确实是你的安排。"
-                else "新时间表覆盖当前时间。确认后，非白名单应用将被拦截，直到该连续时段结束；期间无法在应用内修改或关闭限制。")
+                else "新时间表覆盖当前时间。确认后，各应用将按完全限制、使用后冷却或白名单规则执行；直到该连续时段结束，无法在应用内修改或关闭限制。")
             },
             confirmButton = { TextButton(onClick = { val action = pending; pending = null; action?.let { change(true, it) } }) { Text("确认并开始限制") } },
             dismissButton = { TextButton(onClick = { pending = null }) { Text("返回检查") } })
@@ -190,9 +194,10 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun TodayScreen(settings: FocusSettings, state: FocusState, now: Instant, zone: ZoneId, status: RuntimeStatus, onboarding: Boolean, onToggle: (Boolean) -> Unit, onStatus: () -> Unit, onWarning: () -> Unit) {
+    private fun TodayScreen(settings: FocusSettings, state: FocusState, now: Instant, zone: ZoneId, status: RuntimeStatus, onboarding: Boolean, onToggle: (Boolean) -> Unit, onStatus: () -> Unit, onWarning: () -> Unit, onApps: () -> Unit) {
         val date = now.atZone(zone).toLocalDate()
         val rows = ScheduleEngine.today(settings.rules, date, zone)
+        val cycleRuntime = remember { AppCycleRuntime(this@MainActivity) }
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             item {
                 Surface(color = Ink, shape = RoundedCornerShape(28.dp)) {
@@ -223,16 +228,19 @@ class MainActivity : ComponentActivity() {
             }
             if (!onboarding) item {
                 Surface(shape = RoundedCornerShape(18.dp)) { Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("微信 · 2 分钟使用 / 5 分钟冷却", fontWeight = FontWeight.Bold)
-                    val cycle = remember { WeChatRuntime(this@MainActivity) }.evaluate(opened = false)
+                    Text("弹性使用 · 每个应用独立配置", fontWeight = FontWeight.Bold)
+                    val rule = settings.appCycles[WeChatPolicy.PACKAGE]
+                    val cycle = rule?.let { cycleRuntime.evaluate(WeChatPolicy.PACKAGE, it, opened = false) }
                     Text(when {
-                        !state.restricted -> "当前不在限制时段，微信正常使用"
+                        !state.restricted -> "空闲时正常使用；限制时段内按各应用规则执行"
                         WeChatPolicy.PACKAGE in settings.allowedPackages -> "微信已在白名单，无需临时额度"
-                        cycle.access == WeChatAccess.USING -> "本轮剩余 ${durationText(cycle.remainingMs)}，离开不会暂停"
-                        cycle.access == WeChatAccess.COOLDOWN -> "冷却剩余 ${durationText(cycle.remainingMs)}"
-                        else -> "已准备好，打开微信普通页面才开始计时"
+                        rule == null -> "微信普通页面完全限制；可在空闲时调整应用规则"
+                        cycle?.access == WeChatAccess.USING -> "微信本轮剩余 ${durationText(cycle.remainingMs)}，离开不会暂停"
+                        cycle?.access == WeChatAccess.COOLDOWN -> "微信冷却剩余 ${durationText(cycle.remainingMs)}"
+                        else -> "微信${rule.summary}；打开普通页面才计时"
                     }, color = Muted, fontSize = 13.sp)
-                    Text("通话页面单独放行；具体微信版本的来电兼容性需真机验证。", color = Muted, fontSize = 12.sp)
+                    Text("已配置 ${settings.appCycles.keys.count { it !in settings.allowedPackages }} 个循环规则。微信已识别通话页面仍单独放行。", color = Muted, fontSize = 12.sp)
+                    OutlinedButton(onClick = onApps, modifier = Modifier.fillMaxWidth()) { Text("配置单个应用的使用与冷却") }
                     OutlinedButton(onClick = onWarning, modifier = Modifier.fillMaxWidth()) { Text(if (state.restricted) "预览专注警示" else "自定义标语与警示样式") }
                 } }
             }
@@ -314,11 +322,12 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun AllowlistScreen(allowed: Set<String>, locked: Boolean, onToggle: (String, Boolean) -> Unit) {
+    private fun AllowlistScreen(allowed: Set<String>, cycles: Map<String, AppCycleRule>, locked: Boolean, onRule: (String, AppRuleMode, AppCycleRule?) -> Unit, onToggle: (String, Boolean) -> Unit) {
         var apps by remember { mutableStateOf<List<AppEntry>>(emptyList()) }
         var loaded by remember { mutableStateOf(false) }
         var query by remember { mutableStateOf("") }
-        var onlyAllowed by rememberSaveable { mutableStateOf(false) }
+        var filter by rememberSaveable { mutableIntStateOf(0) }
+        var editing by remember { mutableStateOf<AppEntry?>(null) }
         val essentials = remember { EssentialApps.packages(this) }
         LaunchedEffect(Unit) {
             apps = withContext(Dispatchers.IO) {
@@ -330,30 +339,36 @@ class MainActivity : ComponentActivity() {
             loaded = true
         }
         Column(Modifier.fillMaxSize()) {
-            Note("请保留短信、支付、地图等必需应用。新安装的普通应用默认受限。", Modifier.padding(horizontal = 20.dp))
+            Note("点应用配置完全限制、使用后冷却或白名单。请保留短信、支付、地图等必需应用。", Modifier.padding(horizontal = 20.dp))
             OutlinedTextField(value = query, onValueChange = { query = it }, singleLine = true, label = { Text("搜索应用名称或包名") }, modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp))
             Row(Modifier.padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = !onlyAllowed, onClick = { onlyAllowed = false }, label = { Text("全部应用") })
-                FilterChip(selected = onlyAllowed, onClick = { onlyAllowed = true }, label = { Text("已允许 ${allowed.size}") })
+                FilterChip(selected = filter == 0, onClick = { filter = 0 }, label = { Text("全部") })
+                FilterChip(selected = filter == 1, onClick = { filter = 1 }, label = { Text("已允许 ${allowed.size}") })
+                FilterChip(selected = filter == 2, onClick = { filter = 2 }, label = { Text("循环 ${cycles.keys.count { it !in allowed }}") })
             }
-            val visible = apps.filter { (!onlyAllowed || it.pkg in allowed || it.pkg in essentials) && (it.label.contains(query, true) || it.pkg.contains(query, true)) }
+            val visible = apps.filter { (when (filter) { 1 -> it.pkg in allowed || it.pkg in essentials; 2 -> it.pkg in cycles && it.pkg !in allowed && it.pkg !in essentials; else -> true }) && (it.label.contains(query, true) || it.pkg.contains(query, true)) }
             LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                item { Text("已选 ${allowed.size} 个 · 必要系统应用自动保留", color = Muted, fontSize = 12.sp) }
+                item { Text("勾选表示始终允许 · 必要系统应用自动保留", color = Muted, fontSize = 12.sp) }
                 if (!loaded) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
                 if (loaded && visible.isEmpty()) item { Text("没有找到匹配的应用", color = Muted) }
                 items(visible, key = { it.pkg }) { app ->
                     val essential = app.pkg in essentials
                     val checked = essential || app.pkg in allowed
                     Surface(shape = RoundedCornerShape(16.dp)) {
-                        Row(Modifier.fillMaxWidth().clickable(enabled = !locked && !essential) { onToggle(app.pkg, !checked) }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth().clickable(enabled = !essential) { editing = app }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                             Surface(color = Paper, shape = RoundedCornerShape(12.dp)) { Box(Modifier.size(42.dp), contentAlignment = Alignment.Center) { Text(app.label.take(1), fontWeight = FontWeight.Bold) } }
-                            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) { Text(app.label, fontWeight = FontWeight.Medium); Text(if (essential) "必要系统交互 · 自动保留" else app.pkg, fontSize = 10.sp, color = Muted) }
+                            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                                Text(app.label, fontWeight = FontWeight.Medium)
+                                Text(when { essential -> "必要系统交互 · 自动保留"; checked -> "白名单 · 始终允许"; cycles[app.pkg] != null -> cycles.getValue(app.pkg).summary; else -> "完全限制 · 点此配置" }, fontSize = 12.sp, color = Muted)
+                                if (!essential) Text(app.pkg, fontSize = 10.sp, color = Muted)
+                            }
                             Checkbox(checked = checked, onCheckedChange = { onToggle(app.pkg, it) }, enabled = !locked && !essential)
                         }
                     }
                 }
             }
         }
+        editing?.let { app -> AppRuleEditor(app.label, app.pkg, app.pkg in allowed, cycles[app.pkg], locked, dismiss = { editing = null }, save = { mode, rule -> onRule(app.pkg, mode, rule); editing = null }) }
     }
 
     @Composable

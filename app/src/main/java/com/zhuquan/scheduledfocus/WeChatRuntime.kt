@@ -5,13 +5,26 @@ import android.os.SystemClock
 import android.provider.Settings
 
 class WeChatRuntime(context: Context) {
-    private val prefs = context.applicationContext.getSharedPreferences("wechat_cycle", Context.MODE_PRIVATE)
+    private val cycles = AppCycleRuntime(context)
+    fun evaluate(opened: Boolean, call: Boolean = false) = cycles.evaluate(WeChatPolicy.PACKAGE, AppCycleRule(), opened, call)
+}
+
+class AppCycleRuntime(context: Context) {
+    private val appContext = context.applicationContext
     private val boot = Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, 0).toLong()
-    fun evaluate(opened: Boolean, call: Boolean = false): WeChatDecision = synchronized(lock) {
+    fun evaluate(pkg: String, rule: AppCycleRule, opened: Boolean, call: Boolean = false): WeChatDecision = synchronized(lock) {
+        // Keep the existing WeChat file so upgrades preserve an active use window or cooldown.
+        val prefs = appContext.getSharedPreferences(if (pkg == WeChatPolicy.PACKAGE) "wechat_cycle" else "app_cycle_$pkg", Context.MODE_PRIVATE)
+        val signature = "${rule.useMinutes}/${rule.restMinutes}"
+        val changed = prefs.contains("rule") && prefs.getString("rule", null) != signature
         val before = WeChatCycle(prefs.getLong("ends", 0), prefs.getLong("boot", boot))
-        val result = WeChatPolicy.evaluate(before, SystemClock.elapsedRealtime(), boot, opened, call)
-        if (result.cycle != before) check(prefs.edit().putLong("ends", result.cycle.endsAt).putLong("boot", result.cycle.clockToken).commit())
+        val result = AppCyclePolicy.evaluate(rule, if (changed) WeChatCycle() else before, SystemClock.elapsedRealtime(), boot, opened, call)
+        if (result.cycle != before || prefs.getString("rule", null) != signature)
+            check(prefs.edit().putLong("ends", result.cycle.endsAt).putLong("boot", result.cycle.clockToken).putString("rule", signature).commit())
         result
+    }
+    fun reset(pkg: String) = synchronized(lock) {
+        check(appContext.getSharedPreferences(if (pkg == WeChatPolicy.PACKAGE) "wechat_cycle" else "app_cycle_$pkg", Context.MODE_PRIVATE).edit().clear().commit())
     }
     companion object { private val lock = Any() }
 }

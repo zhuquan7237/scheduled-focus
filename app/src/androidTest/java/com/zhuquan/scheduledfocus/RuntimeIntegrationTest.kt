@@ -37,6 +37,8 @@ class RuntimeIntegrationTest {
         await { FocusAccessibilityService.connected == null }
         context.getSharedPreferences("focus_settings", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("wechat_cycle", Context.MODE_PRIVATE).edit().clear().commit()
+        AppCycleRuntime(context).reset(blockedPackage)
+        AppCycleRuntime(context).reset("com.google.android.deskclock")
         shell("input keyevent KEYCODE_WAKEUP")
         shell("wm dismiss-keyguard")
         shell("input keyevent KEYCODE_HOME")
@@ -57,6 +59,138 @@ class RuntimeIntegrationTest {
         val desired = FocusSettings(rules = listOf(rule), allowedPackages = setOf("one", "two"), onboardingStep = 2)
         assertEquals(EditDecision.SAVE, store.change { desired })
         assertEquals(desired, FocusStore(context).read())
+    }
+
+    @Test fun perAppRulesPersistMigrateAndLock() {
+        assertEquals(AppCycleRule(), store.read().appCycles[WeChatPolicy.PACKAGE])
+        val rules = mapOf(blockedPackage to AppCycleRule(7, 12), "second.app" to AppCycleRule(1, 3))
+        assertEquals(EditDecision.SAVE, store.change { it.copy(appCycles = rules) })
+        assertEquals(rules, FocusStore(context).read().appCycles)
+        assertFalse(WeChatPolicy.PACKAGE in store.read().appCycles)
+        enableActiveTestSchedule()
+        assertEquals(EditDecision.LOCKED, store.change { it.copy(appCycles = emptyMap()) })
+        assertEquals(rules, store.read().appCycles)
+    }
+
+    @Test fun cycleChangesResetOnlyEditedAppAndLegacyWeChatStateSurvives() {
+        val runtime = AppCycleRuntime(context)
+        val rule = AppCycleRule(2, 5)
+        store.change { it.copy(appCycles = it.appCycles + (blockedPackage to rule) + ("com.google.android.deskclock" to rule)) }
+        val first = runtime.evaluate(blockedPackage, rule, true)
+        val second = runtime.evaluate("com.google.android.deskclock", rule, true)
+        store.change { it.copy(appCycles = it.appCycles + (blockedPackage to AppCycleRule(7, 12))) }
+        assertEquals(WeChatAccess.READY, runtime.evaluate(blockedPackage, AppCycleRule(7, 12), false).access)
+        assertEquals(second.cycle, AppCycleRuntime(context).evaluate("com.google.android.deskclock", rule, false).cycle)
+        val now = SystemClock.elapsedRealtime()
+        context.getSharedPreferences("wechat_cycle", 0).edit().clear().putLong("ends", now + 45000)
+            .putLong("boot", android.provider.Settings.Global.getInt(context.contentResolver, android.provider.Settings.Global.BOOT_COUNT, 0).toLong()).commit()
+        val migrated = runtime.evaluate(WeChatPolicy.PACKAGE, rule, false)
+        assertEquals(WeChatAccess.USING, migrated.access)
+        assertEquals(now + 45000, migrated.cycle.endsAt)
+        assertTrue(first.cycle.endsAt > 0)
+    }
+
+    @Test fun appRuleEditorSavesCustomDurationsAndRejectsZero() {
+        store.change { it.copy(onboardingStep = 4) }
+        shell("am start -W -f 0x10008000 -n ${context.packageName}/.MainActivity")
+        await { node("应用规则") != null }
+        click("应用规则")
+        await { editableNodes().size == 1 }
+        setEditable(0, "com.google.android.deskclock")
+        val label = context.packageManager.getApplicationLabel(context.packageManager.getApplicationInfo("com.google.android.deskclock", 0)).toString()
+        click(label)
+        click("使用后冷却")
+        await { editableNodes().size == 2 }
+        setEditable(0, "0")
+        shell("screencap -p /sdcard/focus-app-rule-invalid.png")
+        await { !clickableNode(node("保存应用规则")!!).isEnabled }
+        setEditable(0, "7")
+        setEditable(1, "12")
+        shell("screencap -p /sdcard/focus-app-rule-editor.png")
+        click("保存应用规则")
+        await { store.read().appCycles["com.google.android.deskclock"] == AppCycleRule(7, 12) }
+        assertFalse("com.google.android.deskclock" in store.read().allowedPackages)
+        shell("screencap -p /sdcard/focus-app-rules-list.png")
+        click(label)
+        click("始终允许（白名单）")
+        click("保存应用规则")
+        await { "com.google.android.deskclock" in store.read().allowedPackages }
+        assertEquals("Whitelist override preserves the remembered cycle for later", AppCycleRule(7, 12), store.read().appCycles["com.google.android.deskclock"])
+        click(label)
+        click("完全限制")
+        click("保存应用规则")
+        await { "com.google.android.deskclock" !in store.read().allowedPackages && "com.google.android.deskclock" !in store.read().appCycles }
+    }
+
+    private fun editableNodes(): List<AccessibilityNodeInfo> {
+        val nodes = mutableListOf<AccessibilityNodeInfo>()
+        fun visit(node: AccessibilityNodeInfo?) {
+            if (node == null) return
+            if (node.isEditable) nodes += node
+            for (i in 0 until node.childCount) visit(node.getChild(i))
+        }
+        visit(automation.rootInActiveWindow)
+        return nodes
+    }
+    private fun setEditable(index: Int, text: String) {
+        assertTrue(editableNodes()[index].performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text) }))
+        SystemClock.sleep(350)
+    }
+
+    @Test fun independentAppsRespectCustomCyclesAcrossRuntimeRecreation() {
+        val clock = shell("cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p com.google.android.deskclock").lineSequence().last { it.contains('/') }.trim()
+        store.change { it.copy(appCycles = mapOf(blockedPackage to AppCycleRule(1, 1), "com.google.android.deskclock" to AppCycleRule(4, 3))) }
+        enableActiveTestSchedule()
+        openBlockedApp()
+        await { FocusAccessibilityService.connected?.lastCheck?.contains("cycle=USING") == true }
+        val a = AppCycleRuntime(context).evaluate(blockedPackage, AppCycleRule(1, 1), false)
+        shell("am start -W -n $clock")
+        await { foreground() == "com.google.android.deskclock" }
+        await { AppCycleRuntime(context).evaluate("com.google.android.deskclock", AppCycleRule(4, 3), false).access == WeChatAccess.USING }
+        val b = AppCycleRuntime(context).evaluate("com.google.android.deskclock", AppCycleRule(4, 3), false)
+        assertTrue(b.remainingMs > 230000)
+        assertEquals(a.cycle, AppCycleRuntime(context).evaluate(blockedPackage, AppCycleRule(1, 1), true).cycle)
+        seedAppCycleEnd(blockedPackage, SystemClock.elapsedRealtime() - 1000)
+        openBlockedApp()
+        await { foreground() != blockedPackage }
+        assertEquals(WeChatAccess.COOLDOWN, AppCycleRuntime(context).evaluate(blockedPackage, AppCycleRule(1, 1), false).access)
+        SystemClock.sleep(1200)
+        shell("am start -W -n $clock")
+        await { foreground() == "com.google.android.deskclock" }
+        SystemClock.sleep(1000)
+        assertEquals("com.google.android.deskclock", foreground())
+        seedAppCycleEnd(blockedPackage, SystemClock.elapsedRealtime() - 61000)
+        assertEquals(WeChatAccess.READY, AppCycleRuntime(context).evaluate(blockedPackage, AppCycleRule(1, 1), false).access)
+        shell("input keyevent KEYCODE_HOME")
+        SystemClock.sleep(1200)
+        openBlockedApp()
+        await { foreground() == blockedPackage && AppCycleRuntime(context).evaluate(blockedPackage, AppCycleRule(1, 1), false).access == WeChatAccess.USING }
+        assertTrue(AppCycleRuntime(context).evaluate(blockedPackage, AppCycleRule(1, 1), false).remainingMs > 55000)
+    }
+
+    @Test fun fullCustomOneMinuteUseAndOneMinuteCooldown() {
+        Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("fullAppCycle") == "true")
+        store.change { it.copy(appCycles = mapOf(blockedPackage to AppCycleRule(1, 1))) }
+        enableActiveTestSchedule()
+        openBlockedApp()
+        await { AppCycleRuntime(context).evaluate(blockedPackage, AppCycleRule(1, 1), false).access == WeChatAccess.USING }
+        val cycle = AppCycleRuntime(context).evaluate(blockedPackage, AppCycleRule(1, 1), false).cycle
+        while (SystemClock.elapsedRealtime() < cycle.endsAt + 1500) SystemClock.sleep(500)
+        await { foreground() != blockedPackage }
+        SystemClock.sleep(1200)
+        openBlockedApp()
+        await { foreground() != blockedPackage }
+        while (SystemClock.elapsedRealtime() < cycle.endsAt + 61500) SystemClock.sleep(500)
+        assertEquals(WeChatAccess.READY, AppCycleRuntime(context).evaluate(blockedPackage, AppCycleRule(1, 1), false).access)
+        SystemClock.sleep(2000)
+        assertEquals(WeChatAccess.READY, AppCycleRuntime(context).evaluate(blockedPackage, AppCycleRule(1, 1), false).access)
+        openBlockedApp()
+        await { AppCycleRuntime(context).evaluate(blockedPackage, AppCycleRule(1, 1), false).access == WeChatAccess.USING }
+    }
+
+    private fun seedAppCycleEnd(pkg: String, ends: Long) {
+        context.getSharedPreferences("app_cycle_$pkg", 0).edit().putLong("ends", ends)
+            .putLong("boot", android.provider.Settings.Global.getInt(context.contentResolver, android.provider.Settings.Global.BOOT_COUNT, 0).toLong()).commit()
     }
 
     @Test fun oldSettingsMigrateAndWarningStylePersists() {
@@ -212,7 +346,7 @@ class RuntimeIntegrationTest {
         }
         return find(automation.rootInActiveWindow)
     }
-    private fun clickableNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo = if (node.isClickable || node.parent == null) node else clickableNode(node.parent)
+    private fun clickableNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo = if (node.isClickable || !node.isEnabled || node.parent == null) node else clickableNode(node.parent)
     private fun click(text: String) {
         await { node(text) != null }
         assertTrue(clickableNode(node(text)!!).performAction(AccessibilityNodeInfo.ACTION_CLICK))

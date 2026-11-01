@@ -10,15 +10,7 @@ object WeChatPolicy {
     const val USE_MS = 120_000L
     const val REST_MS = 300_000L
     fun evaluate(cycle: WeChatCycle, now: Long, clockToken: Long, opened: Boolean, call: Boolean = false): WeChatDecision {
-        // A reboot cannot safely reuse elapsedRealtime. Restore conservatively with a cooldown.
-        val restored = if (cycle.endsAt > 0 && cycle.clockToken != clockToken) WeChatCycle(now, clockToken) else cycle
-        if (call) return WeChatDecision(restored, WeChatAccess.CALL)
-        if (restored.endsAt > now) return WeChatDecision(restored, WeChatAccess.USING, restored.endsAt - now)
-        if (restored.endsAt > 0 && now < restored.endsAt + REST_MS)
-            return WeChatDecision(restored, WeChatAccess.COOLDOWN, restored.endsAt + REST_MS - now)
-        if (!opened) return WeChatDecision(WeChatCycle(), WeChatAccess.READY)
-        val next = WeChatCycle(now + USE_MS, clockToken)
-        return WeChatDecision(next, WeChatAccess.USING, USE_MS)
+        return AppCyclePolicy.evaluate(AppCycleRule(), cycle, now, clockToken, opened, call)
     }
     // Exact call activity names only. Never infer call status from chat text or a whole package prefix.
     fun isCallActivity(name: String?) = name in setOf(
